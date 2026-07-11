@@ -1,0 +1,4 @@
+huggingface_hub>=0.27
+pillow>=11.3        # 11.3+ decodes AVIF natively; test set mixes JPEG/PNG/WEBP/AVIF (all named .jpg)
+pandas>=2.0
+python-dotenv>=1.0
