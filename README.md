@@ -140,14 +140,14 @@ usage in [`code/README.md`](./code/README.md).
 │   ├── ARCHITECTURE.md          #   component design + tradeoffs + edge cases
 │   ├── requirements.txt
 │   └── README.md
-├── dataset/
-│   ├── claims.csv               # inputs (run your agent on these — 44 rows)
-│   ├── sample_claims.csv        # inputs + expected outputs (20 labeled, for dev/eval)
-│   ├── user_history.csv         # per-user claim history / risk context
-│   ├── evidence_requirements.csv# minimum image-evidence checklist by object/issue
-│   ├── images/sample/           # images referenced by sample_claims.csv
-│   └── images/test/             # images referenced by claims.csv
-└── output.csv                   # agent predictions (14 fields × 44 rows)
+└── dataset/
+    ├── claims.csv               # inputs (run your agent on these — 44 rows)
+    ├── sample_claims.csv        # inputs + expected outputs (20 labeled, for dev/eval)
+    ├── user_history.csv         # per-user claim history / risk context
+    ├── evidence_requirements.csv# minimum image-evidence checklist by object/issue
+    ├── output.csv               # agent predictions (14 fields × 44 rows)
+    ├── images/sample/           # images referenced by sample_claims.csv
+    └── images/test/             # images referenced by claims.csv
 ```
 
 ---
@@ -212,7 +212,8 @@ python code/main.py --model cheap           # run with the cheap tier
 python code/postprocess.py                  # assert-based schema/rule self-check
 ```
 
-Predictions are written to **`output.csv`** at the repo root (14 columns per claim). The
+Predictions are written to **`output.csv`** (14 columns per claim); the submitted copy lives
+in **`dataset/output.csv`** — pass `--output dataset/output.csv` to write there directly. The
 first live run populates the response cache; subsequent runs load it instantly.
 
 Run the evaluation + model comparison (writes `code/evaluation/evaluation_report.md`):
