@@ -147,7 +147,7 @@ usage in [`code/README.md`](./code/README.md).
 │   ├── evidence_requirements.csv# minimum image-evidence checklist by object/issue
 │   ├── images/sample/           # images referenced by sample_claims.csv
 │   └── images/test/             # images referenced by claims.csv
-└── output_new.csv               # agent predictions (14 fields × 44 rows)
+└── output.csv                   # agent predictions (14 fields × 44 rows)
 ```
 
 ---
