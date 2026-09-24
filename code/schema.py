@@ -1,4 +1,4 @@
-"""Canonical allowed values (from problem_statement.md). Imported by prompts + postprocess."""
+# Defines the allowed output values for damage-claim reviews.
 from __future__ import annotations
 
 CLAIM_STATUS = ["supported", "contradicted", "not_enough_information"]
@@ -26,7 +26,6 @@ RISK_FLAGS = [
 
 SEVERITY = ["none", "low", "medium", "high", "unknown"]
 
-# Risk flags that should also trigger manual_review_required (postprocess rule).
 ESCALATING_FLAGS = {"claim_mismatch", "possible_manipulation", "non_original_image", "wrong_object"}
 
 ALL_OBJECT_PARTS = sorted({p for parts in OBJECT_PART.values() for p in parts})

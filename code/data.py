@@ -1,4 +1,4 @@
-"""Loaders for claims, user history, evidence requirements; output writer."""
+# Loads claim data and writes prediction rows in the required CSV format.
 from __future__ import annotations
 
 import csv
@@ -20,14 +20,14 @@ OUTPUT_COLUMNS = [
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
 
+# Loads a claims CSV into row dictionaries.
 def load_claims(csv_path: str | Path) -> list[dict]:
-    """Read a claims CSV (input-only or labeled) into a list of row dicts (str values)."""
     df = pd.read_csv(csv_path, dtype=str, keep_default_na=False)
     return df.to_dict(orient="records")
 
 
+# Loads claim history indexed by user ID.
 def load_user_history() -> dict[str, dict]:
-    """Map user_id -> history row dict. Empty dict if file missing."""
     path = DATASET_DIR / "user_history.csv"
     if not path.exists():
         return {}
@@ -35,9 +35,8 @@ def load_user_history() -> dict[str, dict]:
     return {row["user_id"]: row for row in df.to_dict(orient="records")}
 
 
+# Loads general and object-specific evidence requirements.
 def load_evidence_requirements() -> dict[str, list[dict]]:
-    """Map claim_object -> list of {applies_to, minimum_image_evidence}. 'all' rows
-    are attached to every object so the prompt always carries the general standards."""
     path = DATASET_DIR / "evidence_requirements.csv"
     if not path.exists():
         return {}
@@ -51,10 +50,8 @@ def load_evidence_requirements() -> dict[str, list[dict]]:
     return by_object
 
 
+# Resolves submitted image paths to image IDs and absolute paths.
 def resolve_images(image_paths_field: str) -> list[tuple[str, Path]]:
-    """Split the semicolon-separated image_paths into (image_id, absolute_path) pairs.
-    image_id is the filename without extension (e.g. 'img_1'). Paths are relative to
-    dataset/. Order is preserved."""
     out: list[tuple[str, Path]] = []
     for raw in (image_paths_field or "").split(";"):
         rel = raw.strip()
@@ -65,9 +62,8 @@ def resolve_images(image_paths_field: str) -> list[tuple[str, Path]]:
     return out
 
 
+# Writes prediction rows using the required column order and quoting.
 def write_output(rows: list[dict], out_path: str | Path) -> None:
-    """Write rows to CSV with the exact required columns/order and QUOTE_ALL quoting
-    (matches the input files' style)."""
     out_path = Path(out_path)
     with out_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=OUTPUT_COLUMNS, quoting=csv.QUOTE_ALL,

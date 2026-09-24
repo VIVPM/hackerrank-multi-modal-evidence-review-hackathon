@@ -1,4 +1,4 @@
-"""Image preprocessing: load, downscale, JPEG re-encode, base64 data URI, content hash."""
+# Prepares claim images for multimodal model requests.
 from __future__ import annotations
 
 import base64
@@ -11,9 +11,8 @@ from PIL import Image
 from data import IMAGE_EXTS
 
 
+# Converts one image into a resized JPEG data URI with a content hash.
 def prepare_image(path: Path, max_px: int = 1024, quality: int = 85) -> dict | None:
-    """Return {image_id, data_uri, sha256} for one image, or None if it is missing,
-    not an image file, or unreadable. Downscales the long edge to max_px (never upscales)."""
     if path.suffix.lower() not in IMAGE_EXTS or not path.is_file():
         return None
     try:
@@ -26,7 +25,7 @@ def prepare_image(path: Path, max_px: int = 1024, quality: int = 85) -> dict | N
                                 max(1, round(im.height * scale))))
             buf = io.BytesIO()
             im.save(buf, format="JPEG", quality=quality)
-    except Exception:  # ponytail: any decode/IO failure -> treat as unusable image
+    except Exception:
         return None
     raw = buf.getvalue()
     b64 = base64.b64encode(raw).decode("ascii")
@@ -37,15 +36,9 @@ def prepare_image(path: Path, max_px: int = 1024, quality: int = 85) -> dict | N
     }
 
 
+# Prepares all claim images and separates usable and unusable IDs.
 def load_claim_images(image_pairs: list[tuple[str, Path]], max_px: int = 1024,
                       quality: int = 85) -> tuple[list[dict], list[str], list[str]]:
-    """Prepare all images for a claim.
-
-    Returns (prepared, present_ids, missing_ids):
-      prepared    - list of dicts from prepare_image, in input order
-      present_ids - image_ids successfully prepared
-      missing_ids - image_ids that were missing/unreadable
-    """
     prepared, present_ids, missing_ids = [], [], []
     for image_id, path in image_pairs:
         info = prepare_image(path, max_px, quality)
