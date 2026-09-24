@@ -1,21 +1,22 @@
-"""Scoring helpers: per-field accuracy + set-based risk_flags P/R/F1 + claim_status confusion."""
+# Calculates prediction accuracy and risk-flag metrics for evaluations.
 from __future__ import annotations
 
-# Categorical/boolean fields scored by exact match (justification text is not scored).
 CATEGORICAL = ["claim_status", "evidence_standard_met", "valid_image",
                "issue_type", "object_part", "severity"]
 
 
+# Normalizes a metric value for comparison.
 def _n(v) -> str:
     return str(v).strip().lower()
 
 
+# Converts semicolon-delimited flags into a normalized set.
 def _flagset(v) -> set[str]:
     return {x.strip().lower() for x in str(v or "none").split(";") if x.strip()}
 
 
+# Scores prediction rows against gold rows in matching order.
 def score(preds: list[dict], golds: list[dict]) -> dict:
-    """Return metrics comparing prediction rows to gold rows (matched by position)."""
     n = len(golds)
     assert len(preds) == n, "pred/gold length mismatch"
     out: dict = {"n": n}
@@ -36,7 +37,6 @@ def score(preds: list[dict], golds: list[dict]) -> dict:
     out["risk_flags_recall"] = rec
     out["risk_flags_f1"] = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
 
-    # claim_status confusion: gold -> {pred: count}
     labels = ["supported", "contradicted", "not_enough_information"]
     conf = {gl: {pl: 0 for pl in labels} for gl in labels}
     for p, g in zip(preds, golds):

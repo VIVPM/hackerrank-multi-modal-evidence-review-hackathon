@@ -1,10 +1,4 @@
-"""Evaluation harness: run the pipeline on sample_claims.csv for one or more model tiers,
-score against the labeled columns, and write evaluation_report.md (incl. operational analysis).
-
-Usage:
-  python code/evaluation/main.py --mock                      # validate harness offline
-  python code/evaluation/main.py --models cheap,strong       # live comparison (needs HF_TOKEN)
-"""
+# Evaluates pipeline predictions against the labeled sample claims.
 from __future__ import annotations
 
 import argparse
@@ -12,28 +6,27 @@ import sys
 import time
 from pathlib import Path
 
-# Make the sibling modules in code/ importable when run as a script.
 CODE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(CODE_DIR))
 
-from config import DATASET_DIR, Settings           # noqa: E402
-from client import VLMClient                        # noqa: E402
-from data import (load_claims, load_evidence_requirements, load_user_history,  # noqa: E402
+from config import DATASET_DIR, Settings
+from client import VLMClient
+from data import (load_claims, load_evidence_requirements, load_user_history,
                   resolve_images, write_output)
-from main import process_claim                      # noqa: E402
-from prompts import SYSTEM_PROMPT                    # noqa: E402
-from metrics import score                            # noqa: E402
+from main import process_claim
+from prompts import SYSTEM_PROMPT
+from metrics import score
 
-# Illustrative per-1M-token prices (USD). Update with your provider's published rates.
 PRICES = {
     "cheap": {"in": 0.10, "out": 0.30},
     "strong": {"in": 0.40, "out": 1.20},
 }
-IMG_TOKENS = 1000   # ~Qwen-VL vision tokens for a ~1024px image (assumption)
-OUT_TOKENS = 200    # ~output tokens per claim (assumption)
-TEST_CLAIMS = 44    # rows in dataset/claims.csv (for full-run cost projection)
+IMG_TOKENS = 1000
+OUT_TOKENS = 200
+TEST_CLAIMS = 44
 
 
+# Runs one model configuration over the supplied claims.
 def run_model(alias: str, claims: list[dict], history_map: dict, req_map: dict,
               args) -> dict:
     settings = Settings(model=alias, mock=args.mock, sleep=args.sleep, workers=args.workers)
@@ -46,6 +39,7 @@ def run_model(alias: str, claims: list[dict], history_map: dict, req_map: dict,
             "elapsed": elapsed, "api_calls": client.api_calls, "cache_hits": client.cache_hits}
 
 
+# Estimates token use, cost, and per-claim latency for a model run.
 def estimate_ops(alias: str, claims: list[dict], n_images: int, elapsed: float) -> dict:
     text_tokens = sum((len(SYSTEM_PROMPT) + len(c.get("user_claim", "")) + 500) / 4 for c in claims)
     in_tokens = text_tokens + n_images * IMG_TOKENS
@@ -61,10 +55,12 @@ def estimate_ops(alias: str, claims: list[dict], n_images: int, elapsed: float) 
     }
 
 
+# Formats a decimal as a percentage.
 def _pct(x: float) -> str:
     return f"{x * 100:.1f}%"
 
 
+# Builds a Markdown evaluation report from model results.
 def build_report(results: list[dict], n_claims: int, n_images: int,
                  best_alias: str, is_mock: bool) -> str:
     L = []
@@ -77,7 +73,6 @@ def build_report(results: list[dict], n_claims: int, n_images: int,
              "claim-restate-then-inspect prompt, deterministic history/rule fusion.\n"
              "- Comparison (Option A): cheap vs strong model, identical prompt.\n")
 
-    # Metrics table
     L.append("\n## Accuracy on the labeled sample\n")
     fields = ["claim_status_acc", "evidence_standard_met_acc", "valid_image_acc",
               "issue_type_acc", "object_part_acc", "severity_acc",
@@ -90,7 +85,6 @@ def build_report(results: list[dict], n_claims: int, n_images: int,
         cells = " | ".join(_pct(r["metrics"][f]) for r in results)
         L.append(f"| {f} | {cells} |")
 
-    # Per-model claim_status confusion + operational analysis
     for r in results:
         L.append(f"\n## Model: `{r['model_id']}` (alias `{r['alias']}`)\n")
         conf = r["metrics"]["claim_status_confusion"]
@@ -112,7 +106,6 @@ def build_report(results: list[dict], n_claims: int, n_images: int,
         L.append(f"- measured runtime: {r['elapsed']:.1f}s "
                  f"(~{o['per_claim_latency']:.2f}s/claim)")
 
-    # Recommendation + ops notes
     L.append("\n## Final strategy & recommendation\n")
     best = next(r for r in results if r["alias"] == best_alias)
     L.append(f"Selected **`{best['model_id']}`** (alias `{best_alias}`) for `output.csv`: "
@@ -130,6 +123,7 @@ def build_report(results: list[dict], n_claims: int, n_images: int,
     return "\n".join(L) + "\n"
 
 
+# Parses options, evaluates models, and writes the report.
 def main() -> None:
     p = argparse.ArgumentParser(description="Evaluate the pipeline on the labeled sample set")
     p.add_argument("--models", default="cheap,strong", help="comma list of aliases/model ids")

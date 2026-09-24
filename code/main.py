@@ -1,10 +1,4 @@
-"""Entry point: read claims.csv, run the VLM evidence-review pipeline, write output.csv.
-
-Usage:
-  python code/main.py --mock --limit 3          # offline dry run (no HF_TOKEN needed)
-  python code/main.py --model cheap             # live run with the cheap model
-  python code/main.py --model strong --output output.csv
-"""
+# Runs the multimodal claim-review pipeline and writes predictions.
 from __future__ import annotations
 
 import argparse
@@ -20,9 +14,9 @@ from postprocess import fallback_row, normalize
 from prompts import build_messages
 
 
+# Processes one claim and returns a safe fallback if processing fails.
 def process_claim(client: VLMClient, claim: dict, history_map: dict,
                   req_map: dict, settings: Settings) -> dict:
-    """Run one claim end-to-end; never raises (failures become a safe fallback row)."""
     try:
         history = history_map.get(claim.get("user_id", ""))
         requirements = req_map.get(claim.get("claim_object", ""), [])
@@ -34,10 +28,11 @@ def process_claim(client: VLMClient, claim: dict, history_map: dict,
         raw = client.complete(messages, image_hashes,
                               mock_ctx={"claim": claim, "present_ids": present_ids})
         return normalize(raw, claim, present_ids, history)
-    except Exception as e:  # one bad row must not sink the run
+    except Exception as e:
         return fallback_row(claim, f"Processing error: {e}")
 
 
+# Runs the pipeline for every input claim and writes its output CSV.
 def run(settings: Settings, input_csv: Path, output_csv: Path) -> None:
     claims = load_claims(input_csv)
     if settings.limit:
@@ -49,10 +44,11 @@ def run(settings: Settings, input_csv: Path, output_csv: Path) -> None:
     mode = "MOCK" if settings.mock else f"model={settings.model_id} provider={settings.provider}"
     print(f"Processing {len(claims)} claims [{mode}] workers={settings.workers} ...")
 
+    # Processes an individual claim using the shared pipeline context.
     def work(claim):
         return process_claim(client, claim, history_map, req_map, settings)
 
-    rows: list[dict] = [None] * len(claims)  # type: ignore[list-item]
+    rows: list[dict] = [{} for _ in claims]
     with ThreadPoolExecutor(max_workers=max(1, settings.workers)) as pool:
         for i, row in enumerate(pool.map(work, claims)):
             rows[i] = row
@@ -63,6 +59,7 @@ def run(settings: Settings, input_csv: Path, output_csv: Path) -> None:
     print(f"Wrote {len(rows)} rows -> {output_csv}")
 
 
+# Parses command-line options for a pipeline run.
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Multi-modal evidence review pipeline")
     p.add_argument("--model", default="cheap", help="alias (cheap|strong) or HF model id")
@@ -75,6 +72,7 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+# Runs the command-line entry point.
 def main() -> None:
     args = parse_args()
     settings = Settings(model=args.model, mock=args.mock, limit=args.limit,
