@@ -1,9 +1,10 @@
-"""Prompt construction: a static system rubric + a per-claim user message."""
+# Builds system and user prompts for multimodal claim review.
 from __future__ import annotations
 
 import schema
 
 
+# Formats allowed enum values for the system prompt.
 def _enum_block() -> str:
     parts = "\n".join(f"  - {obj}: {', '.join(vals)}" for obj, vals in schema.OBJECT_PART.items())
     return (
@@ -85,8 +86,8 @@ the system from history; you may still add them if the conversation clearly warr
 """
 
 
+# Returns the provider response JSON schema.
 def output_json_schema() -> dict:
-    """JSON schema for response_format (used by providers that support it)."""
     return {
         "type": "object",
         "additionalProperties": False,
@@ -110,6 +111,7 @@ def output_json_schema() -> dict:
     }
 
 
+# Formats a user's historical claim context for the prompt.
 def _history_block(history: dict | None) -> str:
     if not history:
         return "No prior history on record for this user."
@@ -124,10 +126,10 @@ def _history_block(history: dict | None) -> str:
     )
 
 
+# Builds the system and multimodal user messages for one claim.
 def build_messages(claim: dict, history: dict | None, requirements: list[dict],
                    prepared_images: list[dict], present_ids: list[str],
                    missing_ids: list[str]) -> list[dict]:
-    """Build the chat messages (system + multimodal user) for one claim."""
     obj = claim.get("claim_object", "")
     reqs = "\n".join(f"  - ({r['applies_to']}) {r['minimum_image_evidence']}" for r in requirements) \
         or "  - (none provided)"

@@ -1,4 +1,4 @@
-"""VLM client: HF Inference Providers call, content-addressed cache, mock mode, retry."""
+# Calls the vision-language model with caching, retrying, and mock support.
 from __future__ import annotations
 
 import json
@@ -7,7 +7,7 @@ import re
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from config import Settings
 from prompts import output_json_schema
@@ -15,8 +15,8 @@ from prompts import output_json_schema
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 
+# Extracts a JSON object from a model response.
 def _parse_json(text: str) -> dict:
-    """Extract a JSON object from model output (tolerates code fences / surrounding prose)."""
     if not text:
         raise ValueError("empty response")
     m = _FENCE.search(text)
@@ -27,8 +27,6 @@ def _parse_json(text: str) -> dict:
         raise ValueError("no JSON object found")
     return json.loads(text[start:end + 1])
 
-
-# --- mock -----------------------------------------------------------------
 
 _ISSUE_KEYWORDS = [
     ("glass_shatter", ["shatter"]), ("crack", ["crack", "cracked"]),
@@ -53,6 +51,7 @@ _INJECTION = ["ignore all previous", "ignore previous", "approve", "mark this ro
               "skip manual review", "accept this", "mark supported"]
 
 
+# Chooses the first matching keyword value or a default.
 def _guess(text: str, candidates, default):
     low = text.lower()
     for value, keys in candidates:
@@ -61,8 +60,8 @@ def _guess(text: str, candidates, default):
     return default
 
 
+# Generates a deterministic offline response for a claim.
 def _mock_response(ctx: dict) -> dict:
-    """Deterministic rule-based stub so the pipeline runs end-to-end without an API."""
     claim = ctx["claim"]
     present = ctx["present_ids"]
     obj = claim.get("claim_object", "")
@@ -85,19 +84,20 @@ def _mock_response(ctx: dict) -> dict:
     }
 
 
-# --- client ---------------------------------------------------------------
-
+# Manages model calls, response caching, and retry behavior.
 class VLMClient:
+    # Initializes the client state and cache.
     def __init__(self, settings: Settings):
         self.s = settings
         self._lock = threading.Lock()
         self._hf: Any = None
         self._use_schema = settings.use_schema
-        self.api_calls = 0       # real HF calls made (cache misses, non-mock)
+        self.api_calls = 0
         self.cache_hits = 0
         self._cache_path = Path(settings.cache_path)
         self._cache = self._load_cache()
 
+    # Loads cached responses from disk when available.
     def _load_cache(self) -> dict:
         if self._cache_path.exists():
             try:
@@ -106,21 +106,24 @@ class VLMClient:
                 return {}
         return {}
 
+    # Persists cached responses atomically.
     def _save_cache(self) -> None:
         self._cache_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._cache_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self._cache), encoding="utf-8")
         tmp.replace(self._cache_path)
 
+    # Creates and returns the configured Hugging Face client.
     @property
     def hf(self) -> Any:
         if self._hf is None:
             if not self.s.hf_token:
                 raise RuntimeError("HF_TOKEN not set. Add it to .env or use --mock.")
             from huggingface_hub import InferenceClient
-            self._hf = InferenceClient(provider=self.s.provider, api_key=self.s.hf_token)  # type: ignore[arg-type]
+            self._hf = InferenceClient(provider=cast(Any, self.s.provider), api_key=self.s.hf_token)
         return self._hf
 
+    # Creates a stable cache key from text content and image hashes.
     def _key(self, messages: list[dict], image_hashes: list[str]) -> str:
         import hashlib
         texts = []
@@ -133,10 +136,8 @@ class VLMClient:
         payload = json.dumps([self.s.model_id, texts, sorted(image_hashes)], ensure_ascii=False)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
+    # Returns a cached, mocked, or live raw model response.
     def complete(self, messages: list[dict], image_hashes: list[str], mock_ctx: dict) -> dict:
-        """Return the model's raw field dict (cached). mock_ctx carries claim context for --mock."""
-        # Mock bypasses the cache entirely: it is instant and must never poison the
-        # on-disk cache that live runs (same model_id) read from.
         if self.s.mock:
             return _mock_response(mock_ctx)
 
@@ -152,9 +153,10 @@ class VLMClient:
             self._cache[key] = result
             self._save_cache()
         if self.s.sleep:
-            time.sleep(self.s.sleep)  # pace request rate (live calls only)
+            time.sleep(self.s.sleep)
         return result
 
+    # Calls the model and repairs malformed JSON responses once.
     def _call_hf(self, messages: list[dict]) -> dict:
         content = self._chat_with_retry(messages)
         try:
@@ -165,16 +167,18 @@ class VLMClient:
                                              "Reply with ONLY the JSON object, nothing else."}]
             return _parse_json(self._chat_with_retry(repair, allow_schema=False))
 
+    # Retries transient chat failures with exponential backoff.
     def _chat_with_retry(self, messages: list[dict], allow_schema: bool = True) -> str:
         last = None
         for attempt in range(self.s.max_retries):
             try:
                 return self._raw_chat(messages, allow_schema)
-            except Exception as e:  # network / 429 / 5xx -> backoff and retry
+            except Exception as e:
                 last = e
                 time.sleep(min(30.0, 1.5 * (2 ** attempt)) + random.uniform(0, 1))
         raise RuntimeError(f"VLM call failed after {self.s.max_retries} attempts: {last}")
 
+    # Requests structured output when the provider supports it.
     def _raw_chat(self, messages: list[dict], allow_schema: bool) -> str:
         if allow_schema and self._use_schema:
             rf = {"type": "json_schema",
@@ -182,15 +186,16 @@ class VLMClient:
             try:
                 return self._create(messages, rf)
             except Exception:
-                self._use_schema = False  # provider rejected schema; degrade for rest of run
+                self._use_schema = False
         return self._create(messages, None)
 
+    # Sends one chat-completion request to the provider.
     def _create(self, messages: list[dict], response_format: dict | None) -> str:
         resp = self.hf.chat.completions.create(
             model=self.s.model_id,
-            messages=messages,                 # type: ignore[arg-type]
+            messages=messages,
             temperature=self.s.temperature,
             max_tokens=self.s.max_tokens,
-            response_format=response_format,    # type: ignore[arg-type]
+            response_format=response_format,
         )
         return resp.choices[0].message.content

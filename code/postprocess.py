@@ -1,31 +1,34 @@
-"""Validate + normalize raw VLM output, fuse history flags, build the final output row."""
+# Validates and normalizes raw model output into required claim rows.
 from __future__ import annotations
 
 import schema
 from data import OUTPUT_COLUMNS
 
 
+# Normalizes a value for schema comparison.
 def _norm(s) -> str:
     return str(s).strip().lower().replace(" ", "_").replace("-", "_")
 
 
+# Converts a value to an allowed enum value or its default.
 def _coerce_enum(value, allowed: list[str], default: str) -> str:
-    """Map a model value to the closest allowed enum, else default."""
     v = _norm(value)
     if v in allowed:
         return v
-    for a in allowed:           # substring match either direction
+    for a in allowed:
         if a in v or v in a:
             return a
     return default
 
 
+# Converts a value to the required lowercase boolean string.
 def _coerce_bool(value) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     return "true" if _norm(value) in ("true", "1", "yes") else "false"
 
 
+# Filters, orders, and escalates risk flags.
 def _coerce_flags(raw, present_flags_from_history: set[str]) -> list[str]:
     flags: list[str] = []
     items = raw if isinstance(raw, list) else [raw]
@@ -35,7 +38,6 @@ def _coerce_flags(raw, present_flags_from_history: set[str]) -> list[str]:
             flags.append(v)
     flags.extend(present_flags_from_history)
     flags = [f for f in flags if f != "none"]
-    # de-dupe, preserve schema order for stable output
     seen = set()
     ordered = [f for f in schema.RISK_FLAGS if f in flags and not (f in seen or seen.add(f))]
     if any(f in schema.ESCALATING_FLAGS or f == "user_history_risk" for f in ordered):
@@ -44,6 +46,7 @@ def _coerce_flags(raw, present_flags_from_history: set[str]) -> list[str]:
     return ordered or ["none"]
 
 
+# Extracts valid risk flags from a user's claim history.
 def _history_flags(history: dict | None) -> set[str]:
     if not history:
         return set()
@@ -51,13 +54,12 @@ def _history_flags(history: dict | None) -> set[str]:
     return {_norm(f) for f in raw.split(";") if _norm(f) in schema.RISK_FLAGS}
 
 
+# Produces a fully validated output row from a raw model response.
 def normalize(raw: dict, claim: dict, present_ids: list[str], history: dict | None) -> dict:
-    """Produce a fully-validated output row (all 14 columns as strings)."""
     obj = _norm(claim.get("claim_object", ""))
     part_allowed = schema.OBJECT_PART.get(obj, schema.ALL_OBJECT_PARTS)
     raw = raw if isinstance(raw, dict) else {}
 
-    # supporting_image_ids: keep only ids that exist in this row.
     raw_support = raw.get("supporting_image_ids", [])
     raw_support = raw_support if isinstance(raw_support, list) else [raw_support]
     support = [str(s).strip() for s in raw_support if str(s).strip() in present_ids]
@@ -82,7 +84,6 @@ def normalize(raw: dict, claim: dict, present_ids: list[str], history: dict | No
         "severity": _coerce_enum(raw.get("severity", "unknown"), schema.SEVERITY, "unknown"),
     }
 
-    # Edge case: no usable images at all -> safe deterministic fallback (no overreach).
     if not present_ids:
         row.update({
             "evidence_standard_met": "false",
@@ -94,37 +95,30 @@ def normalize(raw: dict, claim: dict, present_ids: list[str], history: dict | No
             "severity": "unknown",
         })
 
-    # Consistency rules matching the labeled-sample conventions (20/20 consistent there):
     if row["claim_status"] != "not_enough_information":
-        # 1. A decided claim (supported/contradicted) means the evidence WAS sufficient
-        #    to evaluate it — gold always pairs decided statuses with evidence=true.
         if row["evidence_standard_met"] == "false":
             row["evidence_standard_met"] = "true"
             row["evidence_standard_met_reason"] = (
                 "The claimed object and part are visible clearly enough to evaluate the "
                 "claim, so the image set meets the evidence standard.")
-        # 2. A decision is grounded in the images that produced it — gold cites image ids
-        #    for every decided claim (the mismatch-showing image supports a contradiction).
         if row["supporting_image_ids"] == "none" and present_ids:
             row["supporting_image_ids"] = ";".join(present_ids)
-        # 3. severity 'unknown' is reserved for undecidable claims; a contradicted claim
-        #    with no assessable damage is severity 'none' in the gold convention.
         if row["claim_status"] == "contradicted" and row["severity"] == "unknown":
             row["severity"] = "none"
     elif row["evidence_standard_met"] == "true":
-        # NEI means the claim could not be evaluated -> the standard was not met.
         row["evidence_standard_met"] = "false"
     return row
 
 
+# Creates a safe review row when model processing fails.
 def fallback_row(claim: dict, reason: str) -> dict:
-    """Used when the VLM call itself fails for a row — never crash the run."""
     return normalize({"evidence_standard_met_reason": reason,
                       "claim_status_justification": reason,
                       "risk_flags": ["manual_review_required"]},
                      claim, present_ids=[], history=None)
 
 
+# Runs assertions covering normalization invariants.
 def _selfcheck() -> None:
     claim = {"user_id": "u1", "image_paths": "images/test/c/img_1.jpg;images/test/c/img_2.jpg",
              "user_claim": "rear bumper dent", "claim_object": "car"}
@@ -146,12 +140,10 @@ def _selfcheck() -> None:
     assert "manual_review_required" in flags, "escalation/history must trigger review"
     assert row["valid_image"] == "true" and row["evidence_standard_met"] == "true"
 
-    # no-image fallback
     empty = normalize(raw, claim, present_ids=[], history=None)
     assert empty["claim_status"] == "not_enough_information"
     assert empty["valid_image"] == "false" and empty["supporting_image_ids"] == "none"
 
-    # consistency rules: contradicted must imply evidence=true, cited ids, non-unknown severity
     con = normalize({"claim_status": "contradicted", "evidence_standard_met": False,
                      "supporting_image_ids": [], "severity": "unknown",
                      "issue_type": "none", "object_part": "door", "valid_image": True,
@@ -160,7 +152,6 @@ def _selfcheck() -> None:
     assert con["evidence_standard_met"] == "true", "decided claim must meet evidence standard"
     assert con["supporting_image_ids"] == "img_1;img_2", "decided claim must cite images"
     assert con["severity"] == "none", "contradicted severity must not stay unknown"
-    # and NEI must imply evidence=false
     nei = normalize({"claim_status": "not_enough_information", "evidence_standard_met": True,
                      "valid_image": True}, claim, present_ids=["img_1"], history=None)
     assert nei["evidence_standard_met"] == "false", "NEI must not meet evidence standard"
